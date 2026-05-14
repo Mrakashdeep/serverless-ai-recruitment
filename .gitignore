@@ -3,3 +3,8 @@ PERMANENT_TOKEN.txt
 terraform/terraform.tfstate
 terraform/terraform.tfstate.backup
 terraform/terraform.tfvars
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/terraform.tfvars
+*.zip
