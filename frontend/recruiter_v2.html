@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recruiter Dashboard v2 - AI Recruitment System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .sidebar { min-width: 280px; }
+        .stat-card { transition: transform 0.2s; }
+        .stat-card:hover { transform: translateY(-2px); }
+        .modal { display: none; }
+        .modal.active { display: flex; }
+    </style>
+</head>
+<body class="bg-gray-50 h-screen overflow-hidden">
+    <!-- Auth Modal -->
+    <div id="auth-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">Recruiter Authentication</h2>
+            <p class="text-gray-600 mb-6">Enter your JWT token</p>
+            <input type="password" id="token-input" 
+                   class="w-full px-4 py-3 border rounded-lg mb-4 font-mono text-sm"
+                   placeholder="Paste JWT token...">
+            <button onclick="authenticate()" 
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg">
+                Login
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div id="dashboard" class="flex h-screen" style="display:none;">
+        <!-- Sidebar -->
+        <aside class="sidebar bg-white border-r border-gray-200 flex flex-col">
+            <div class="p-6 border-b">
+                <h1 class="text-xl font-bold text-gray-900">Recruiter Portal</h1>
+                <p class="text-xs text-gray-500 mt-1">AI Recruitment System</p>
+            </div>
+            
+            <nav class="flex-1 overflow-y-auto p-4">
+                <button onclick="switchView('dashboard')" id="nav-dashboard"
+                        class="w-full text-left px-4 py-3 rounded-lg mb-2 font-medium bg-blue-50 text-blue-700">
+                    � Dashboard
+                </button>
+                <button onclick="switchView('submissions')" id="nav-submissions"
+                        class="w-full text-left px-4 py-3 rounded-lg mb-2 font-medium text-gray-700 hover:bg-gray-50">
+                    � Submissions
+                </button>
+                <button onclick="switchView('jobs')" id="nav-jobs"
+                        class="w-full text-left px-4 py-3 rounded-lg mb-2 font-medium text-gray-700 hover:bg-gray-50">
+                    � Manage Jobs
+                </button>
+                
+                <div class="border-t my-4"></div>
+                
+                <!-- Filters (only show in submissions view) -->
+                <div id="sidebar-filters" style="display:none;">
+                    <h3 class="text-xs font-bold text-gray-500 uppercase mb-3">Filters</h3>
+                    
+                    <div class="mb-4">
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Status</label>
+                        <select id="filter-status" onchange="applyFilters()" 
+                                class="w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">All</option>
+                            <option value="RESUME_EVALUATED">Resume Evaluated</option>
+                            <option value="CODING_READY">Coding Ready</option>
+                            <option value="CODE_EVALUATED">Code Evaluated</option>
+                            <option value="COMPLETED">Completed</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Job Role</label>
+                        <select id="filter-job" onchange="applyFilters()" 
+                                class="w-full px-3 py-2 border rounded-lg text-sm">
+                            <option value="">All Roles</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Search</label>
+                        <input type="text" id="filter-search" onkeyup="applyFilters()" 
+                               placeholder="Name or email..."
+                               class="w-full px-3 py-2 border rounded-lg text-sm">
+                    </div>
+                    
+                    <button onclick="clearFilters()" 
+                            class="w-full px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium">
+                        Clear Filters
+                    </button>
+                </div>
+            </nav>
+            
+            <div class="p-4 border-t">
+                <button onclick="logout()" class="w-full text-sm text-gray-600 hover:text-gray-900 py-2">
+                    Logout
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-y-auto">
+            <!-- Notification Bar -->
+            <div id="notification-bar" class="bg-blue-50 border-b border-blue-200 hidden">
+                <div class="px-6 py-3">
+                    <p class="text-blue-800 text-sm" id="notification-text"></p>
+                </div>
+            </div>
+
+            <div id="content-area" class="p-6">
+                <!-- Content loaded dynamically -->
+            </div>
+        </main>
+    </div>
+
+    <!-- Candidate Detail Modal -->
+    <div id="detail-modal" class="modal fixed inset-0 bg-black bg-opacity-50 items-center justify-center z-50 overflow-y-auto">
+        <div class="bg-white rounded-lg max-w-4xl w-full mx-4 my-8 max-h-screen overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b px-8 py-4 flex justify-between items-center">
+                <h2 class="text-2xl font-bold" id="modal-title">Candidate Details</h2>
+                <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+            </div>
+            <div id="modal-content" class="p-8"></div>
+        </div>
+    </div>
+
+    <!-- Job Editor Modal -->
+    <div id="job-modal" class="modal fixed inset-0 bg-black bg-opacity-50 items-center justify-center z-50 overflow-y-auto">
+        <div class="bg-white rounded-lg max-w-4xl w-full mx-4 my-8 max-h-screen overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b px-8 py-4 flex justify-between items-center">
+                <h2 class="text-2xl font-bold" id="job-modal-title">Create New Job</h2>
+                <button onclick="closeJobModal()" class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+            </div>
+            <div id="job-modal-content" class="p-8"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://nin1zoih0d.execute-api.ap-south-1.amazonaws.com/prod';
+        let JWT_TOKEN = 'eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJzdWIiOiAicmVjcnVpdGVyIiwgInNjb3BlIjogInN1Ym1pdCByZWFkIiwgImlhdCI6IDE3MDAwMDAwMDAsICJleHAiOiA0MDk5OTk5OTk5LCAiaXNzIjogInNlcnZlcmxlc3MtcmVjcnVpdG1lbnQtc3lzdGVtIn0.Y970jsa6tbVGqBorgRbb-QpPQSISMMI-IEAdqe7lVDc';
+        let currentView = 'dashboard';
+        let allSubmissions = [];
+        let filteredSubmissions = [];
+        let allJobs = [];
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const stored = localStorage.getItem('recruiter_token');
+            if (stored) {
+                JWT_TOKEN = stored;
+                document.getElementById('auth-modal').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'flex';
+                loadDashboard();
+            }
+        });
+
+        function authenticate() {
+            const token = document.getElementById('token-input').value.trim();
+            if (!token) return;
+            JWT_TOKEN = token;
+            localStorage.setItem('recruiter_token', token);
+            document.getElementById('auth-modal').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'flex';
+            loadDashboard();
+        }
+
+        function logout() {
+            JWT_TOKEN = null;
+            localStorage.removeItem('recruiter_token');
+            location.reload();
+        }
+
+        async function loadDashboard() {
+            await loadSubmissions();
+            await loadJobs();
+            switchView('dashboard');
+        }
+
+        async function loadSubmissions() {
+            try {
+                const res = await fetch(`${API_BASE}/results`);
+                const data = await res.json();
+                allSubmissions = data.submissions || [];
+                filteredSubmissions = [...allSubmissions];
+                populateJobFilter();
+            } catch (err) {
+                console.error('Failed to load submissions:', err);
+            }
+        }
+
+        async function loadJobs() {
+            try {
+                const res = await fetch(`${API_BASE}/jobs`);
+                const data = await res.json();
+                allJobs = data.jobs || [];
+            } catch (err) {
+                console.error('Failed to load jobs:', err);
+            }
+        }
+
+        function populateJobFilter() {
+            const roles = [...new Set(allSubmissions.map(s => s.job_role))];
+            const select = document.getElementById('filter-job');
+            select.innerHTML = '<option value="">All Roles</option>';
+            roles.forEach(role => {
+                select.innerHTML += `<option value="${role}">${role}</option>`;
+            });
+        }
+
+        function switchView(view) {
+            currentView = view;
+            
+            // Update nav
+            document.querySelectorAll('[id^="nav-"]').forEach(el => {
+                el.className = 'w-full text-left px-4 py-3 rounded-lg mb-2 font-medium text-gray-700 hover:bg-gray-50';
+            });
+            document.getElementById(`nav-${view}`).className = 'w-full text-left px-4 py-3 rounded-lg mb-2 font-medium bg-blue-50 text-blue-700';
+            
+            // Show/hide filters
+            document.getElementById('sidebar-filters').style.display = view === 'submissions' ? 'block' : 'none';
+            
+            // Render content
+            if (view === 'dashboard') renderDashboard();
+            else if (view === 'submissions') renderSubmissions();
+            else if (view === 'jobs') renderJobs();
+        }
+
+        function renderDashboard() {
+            const total = allSubmissions.length;
+            const pending = allSubmissions.filter(s => s.status === 'RESUME_EVALUATED').length;
+            const shortlisted = allSubmissions.filter(s => s.final_status === 'SHORTLISTED').length;
+            const rejected = allSubmissions.filter(s => s.final_status === 'REJECTED').length;
+            
+            document.getElementById('content-area').innerHTML = `
+                <h2 class="text-3xl font-bold text-gray-900 mb-8">Dashboard Overview</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                    <div class="stat-card bg-white rounded-lg shadow p-6">
+                        <p class="text-sm text-gray-600 mb-1">Total Submissions</p>
+                        <p class="text-4xl font-bold text-gray-900">${total}</p>
+                    </div>
+                    <div class="stat-card bg-white rounded-lg shadow p-6">
+                        <p class="text-sm text-gray-600 mb-1">Pending Review</p>
+                        <p class="text-4xl font-bold text-yellow-600">${pending}</p>
+                    </div>
+                    <div class="stat-card bg-white rounded-lg shadow p-6">
+                        <p class="text-sm text-gray-600 mb-1">Shortlisted</p>
+                        <p class="text-4xl font-bold text-green-600">${shortlisted}</p>
+                    </div>
+                    <div class="stat-card bg-white rounded-lg shadow p-6">
+                        <p class="text-sm text-gray-600 mb-1">Rejected</p>
+                        <p class="text-4xl font-bold text-red-600">${rejected}</p>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-bold text-gray-900 mb-4">Recent Activity</h3>
+                    <div class="space-y-3">
+                        ${allSubmissions.slice(0, 5).map(s => `
+                            <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer"
+                                 onclick="viewDetails('${s.submission_id}')">
+                                <div>
+                                    <p class="font-semibold text-gray-900">${s.candidate_name}</p>
+                                    <p class="text-sm text-gray-600">${s.job_role}</p>
+                                </div>
+                                <span class="px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(s.status)}">
+                                    ${formatStatus(s.status)}
+                                </span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSubmissions() {
+            document.getElementById('content-area').innerHTML = `
+                <h2 class="text-3xl font-bold text-gray-900 mb-8">All Submissions</h2>
+                
+                <div class="bg-white rounded-lg shadow overflow-hidden">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 border-b">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Candidate</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Job Role</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Resume</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Code</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Final Decision</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="submissions-table" class="divide-y">
+                            ${renderSubmissionsTable()}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        function renderSubmissionsTable() {
+            if (filteredSubmissions.length === 0) {
+                return '<tr><td colspan="5" class="px-6 py-8 text-center text-gray-500">No submissions found</td></tr>';
+            }
+            
+            return filteredSubmissions.map(sub => `
+                <tr class="hover:bg-gray-50 cursor-pointer" onclick="viewDetails('${sub.submission_id}')">
+                    <td class="px-6 py-4">
+                        <div class="font-semibold text-gray-900">${sub.candidate_name}</div>
+                        <div class="text-sm text-gray-500">${sub.email}</div>
+                    </td>
+                    <td class="px-6 py-4 text-sm">${sub.job_role}</td>
+                    <td class="px-6 py-4">
+                        ${sub.resume_score ? `
+                            <div class="flex items-center gap-2">
+                                <span class="font-semibold">${sub.resume_score}</span>
+                                <span class="px-2 py-1 rounded text-xs ${sub.resume_verdict === 'SHORTLIST' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                                    ${sub.resume_verdict}
+                                </span>
+                            </div>
+                        ` : '<span class="text-gray-400">Pending</span>'}
+                    </td>
+                    <td class="px-6 py-4">
+                        ${sub.code_score ? `
+                            <div class="flex items-center gap-2">
+                                <span class="font-semibold">${sub.code_score}</span>
+                                <span class="px-2 py-1 rounded text-xs ${sub.code_verdict === 'PASS' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                                    ${sub.code_verdict}
+                                </span>
+                            </div>
+                        ` : '<span class="text-gray-400">Pending</span>'}
+                    </td>
+                    <td class="px-6 py-4">
+                        ${sub.final_status ? `
+                            <span class="px-3 py-1 rounded-full text-sm font-bold ${sub.final_status === 'SHORTLISTED' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                                ${sub.final_status}
+                            </span>
+                        ` : '<span class="text-gray-400">In Progress</span>'}
+                    </td>
+                    <td class="px-6 py-4">
+                        <span class="px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(sub.status)}">
+                            ${formatStatus(sub.status)}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4">
+                        <button onclick="event.stopPropagation(); viewDetails('${sub.submission_id}')" 
+                                class="text-blue-600 hover:text-blue-800 font-medium text-sm">
+                            View →
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function renderJobs() {
+            document.getElementById('content-area').innerHTML = `
+                <div class="flex justify-between items-center mb-8">
+                    <h2 class="text-3xl font-bold text-gray-900">Manage Jobs</h2>
+                    <button onclick="openJobModal()" 
+                            class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg">
+                        + Create New Job
+                    </button>
+                </div>
+                
+                <div class="grid grid-cols-1 gap-6">
+                    ${allJobs.map(job => `
+                        <div class="bg-white rounded-lg shadow p-6">
+                            <div class="flex justify-between items-start mb-4">
+                                <div>
+                                    <h3 class="text-xl font-bold text-gray-900">${job.job_role}</h3>
+                                    <p class="text-sm text-gray-600 mt-1">ID: ${job.job_id}</p>
+                                </div>
+                                <button onclick="editJob('${job.job_id}')" 
+                                        class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium">
+                                    Edit
+                                </button>
+                            </div>
+                            <p class="text-gray-700 mb-4">${job.description}</p>
+                            <div class="grid grid-cols-2 gap-4 text-sm">
+                                <div><span class="font-semibold">Required Skills:</span> ${job.required_skills}</div>
+                                <div><span class="font-semibold">Experience:</span> ${job.min_experience_years}+ years</div>
+                                <div><span class="font-semibold">Difficulty:</span> ${job.question_difficulty}</div>
+                                <div><span class="font-semibold">Status:</span> ${job.status}</div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
+        function applyFilters() {
+            const status = document.getElementById('filter-status').value;
+            const job = document.getElementById('filter-job').value;
+            const search = document.getElementById('filter-search').value.toLowerCase();
+            
+            filteredSubmissions = allSubmissions.filter(s => {
+                if (status && s.status !== status) return false;
+                if (job && s.job_role !== job) return false;
+                if (search && !s.candidate_name.toLowerCase().includes(search) && !s.email.toLowerCase().includes(search)) return false;
+                return true;
+            });
+            
+            renderSubmissions();
+        }
+
+        function clearFilters() {
+            document.getElementById('filter-status').value = '';
+            document.getElementById('filter-job').value = '';
+            document.getElementById('filter-search').value = '';
+            applyFilters();
+        }
+
+        function getStatusColor(status) {
+            const colors = {
+                'RESUME_PENDING': 'bg-yellow-100 text-yellow-800',
+                'RESUME_EVALUATED': 'bg-blue-100 text-blue-800',
+                'CODING_PENDING': 'bg-purple-100 text-purple-800',
+                'CODING_READY': 'bg-green-100 text-green-800',
+                'CODE_SUBMITTED': 'bg-orange-100 text-orange-800',
+                'CODE_EVALUATED': 'bg-indigo-100 text-indigo-800',
+                'COMPLETED': 'bg-gray-100 text-gray-800'
+            };
+            return colors[status] || 'bg-gray-100 text-gray-800';
+        }
+
+        function formatStatus(status) {
+            if (!status) return 'Unknown';
+            return status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+
+        async function viewDetails(submissionId) {
+            const submission = allSubmissions.find(s => s.submission_id === submissionId);
+            if (!submission) return;
+            
+            document.getElementById('modal-title').textContent = submission.candidate_name;
+            
+            const modalContent = `
+                <div class="space-y-6">
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div><span class="font-semibold">Email:</span> ${submission.email}</div>
+                        <div><span class="font-semibold">Job Role:</span> ${submission.job_role}</div>
+                        <div><span class="font-semibold">Status:</span> <span class="px-2 py-1 rounded text-xs ${getStatusColor(submission.status)}">${formatStatus(submission.status)}</span></div>
+                        <div><span class="font-semibold">Submitted:</span> ${new Date(submission.submitted_at).toLocaleString()}</div>
+                    </div>
+                    
+                    ${submission.resume_score ? `
+                    <div class="border-t pt-4">
+                        <h3 class="text-lg font-bold mb-3">Resume Evaluation</h3>
+                        <div class="bg-gray-50 rounded-lg p-4 space-y-2">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">Score:</span>
+                                <span class="text-2xl font-bold">${submission.resume_score}/100</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="font-semibold">Verdict:</span>
+                                <span class="px-3 py-1 rounded font-semibold ${submission.resume_verdict === 'SHORTLIST' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${submission.resume_verdict}</span>
+                            </div>
+                            ${submission.resume_summary ? `<p class="text-sm text-gray-700 mt-2">${submission.resume_summary}</p>` : ''}
+                        </div>
+                    </div>
+                    ` : ''}
+                    
+                    ${submission.code_score ? `
+                    <div class="border-t pt-4">
+                        <h3 class="text-lg font-bold mb-3">Code Evaluation</h3>
+                        <div class="bg-gray-50 rounded-lg p-4 space-y-2">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">Score:</span>
+                                <span class="text-2xl font-bold">${submission.code_score}/100</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="font-semibold">Verdict:</span>
+                                <span class="px-3 py-1 rounded font-semibold ${submission.code_verdict === 'PASS' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${submission.code_verdict}</span>
+                            </div>
+                        </div>
+                    </div>
+                    ` : ''}
+                    
+                    ${submission.final_status ? `
+                    <div class="border-t pt-4">
+                        <h3 class="text-lg font-bold mb-3">Final Decision</h3>
+                        <div class="bg-gray-50 rounded-lg p-4 space-y-2">
+                            <div class="flex justify-between items-center">
+                                <span class="font-semibold">Overall Score:</span>
+                                <span class="text-2xl font-bold">${submission.final_score}/100</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="font-semibold">Status:</span>
+                                <span class="px-3 py-1 rounded font-semibold text-lg ${submission.final_status === 'SHORTLISTED' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${submission.final_status}</span>
+                            </div>
+                        </div>
+                    </div>
+                    ` : ''}
+                    
+                    ${submission.status === 'RESUME_EVALUATED' && submission.resume_verdict === 'SHORTLIST' ? `
+                    <div class="border-t pt-4 flex gap-4">
+                        <button onclick="makeDecision('${submissionId}', 'ADVANCE')" 
+                                class="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-lg">
+                            ✓ Advance to Coding
+                        </button>
+                        <button onclick="makeDecision('${submissionId}', 'REJECT')" 
+                                class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-lg">
+                            ✗ Reject
+                        </button>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+            
+            document.getElementById('modal-content').innerHTML = modalContent;
+            document.getElementById('detail-modal').classList.add('active');
+        }
+
+
+        async function makeDecision(submissionId, decision) {
+            try {
+                const res = await fetch(`${API_BASE}/decision`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${JWT_TOKEN}`
+                    },
+                    body: JSON.stringify({
+                        submission_id: submissionId,
+                        decision: decision
+                    })
+                });
+                
+                if (res.ok) {
+                    showNotification(`✓ Candidate ${decision === 'ADVANCE' ? 'advanced to coding' : 'rejected'}`);
+                    closeModal();
+                    await loadSubmissions();
+                    if (currentView === 'submissions') renderSubmissions();
+                } else {
+                    showNotification('⚠️ Failed to update decision');
+                }
+            } catch (err) {
+                showNotification('⚠️ Error: ' + err.message);
+            }
+        }
+        function closeModal() {
+            document.getElementById('detail-modal').classList.remove('active');
+        }
+
+        function openJobModal(jobId = null) {
+            document.getElementById('job-modal-title').textContent = jobId ? 'Edit Job' : 'Create New Job';
+            document.getElementById('job-modal-content').innerHTML = renderJobForm(jobId);
+            document.getElementById('job-modal').classList.add('active');
+        }
+
+        function closeJobModal() {
+            document.getElementById('job-modal').classList.remove('active');
+        }
+
+        function renderJobForm(jobId) {
+            const job = jobId ? allJobs.find(j => j.job_id === jobId) : null;
+            
+            return `
+                <form onsubmit="saveJob(event, '${jobId || ''}')">
+                    <div class="grid grid-cols-2 gap-6">
+                        <div class="col-span-2">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Job Title *</label>
+                            <input type="text" name="job_role" required value="${job?.job_role || ''}"
+                                   class="w-full px-4 py-2 border rounded-lg">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Job ID *</label>
+                            <input type="text" name="job_id" required value="${job?.job_id || ''}"
+                                   ${jobId ? 'readonly' : ''}
+                                   class="w-full px-4 py-2 border rounded-lg ${jobId ? 'bg-gray-100' : ''}">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Min Experience (years) *</label>
+                            <input type="number" name="min_experience_years" required value="${job?.min_experience_years || 2}"
+                                   class="w-full px-4 py-2 border rounded-lg">
+                        </div>
+                        
+                        <div class="col-span-2">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Description *</label>
+                            <textarea name="description" rows="3" required
+                                      class="w-full px-4 py-2 border rounded-lg">${job?.description || ''}</textarea>
+                        </div>
+                        
+                        <div class="col-span-2">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Required Skills (comma-separated) *</label>
+                            <input type="text" name="required_skills" required value="${job?.required_skills || ''}"
+                                   placeholder="Python, Django, AWS..."
+                                   class="w-full px-4 py-2 border rounded-lg">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Question Difficulty</label>
+                            <select name="question_difficulty" class="w-full px-4 py-2 border rounded-lg">
+                                <option value="EASY" ${job?.question_difficulty === 'EASY' ? 'selected' : ''}>Easy</option>
+                                <option value="MEDIUM" ${job?.question_difficulty === 'MEDIUM' ? 'selected' : ''}>Medium</option>
+                                <option value="HARD" ${job?.question_difficulty === 'HARD' ? 'selected' : ''}>Hard</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Status</label>
+                            <select name="status" class="w-full px-4 py-2 border rounded-lg">
+                                <option value="active" ${job?.status === 'active' ? 'selected' : ''}>Active</option>
+                                <option value="inactive" ${job?.status === 'inactive' ? 'selected' : ''}>Inactive</option>
+                            </select>
+                        </div>
+                        
+                        <div class="col-span-2 border-t pt-6 mt-4">
+                            <h4 class="text-lg font-bold text-gray-900 mb-4">Custom Evaluation Instructions</h4>
+                            
+                            <div class="mb-4">
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Resume Evaluation Instructions</label>
+                                <textarea name="custom_instructions" rows="3"
+                                          placeholder="Additional criteria for resume evaluation..."
+                                          class="w-full px-4 py-2 border rounded-lg font-mono text-sm">${job?.custom_instructions || ''}</textarea>
+                                <p class="text-xs text-gray-500 mt-1">These instructions will be added to the AI prompt for resume evaluation</p>
+                            </div>
+                            
+                            <div class="mb-4">
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Code Evaluation Instructions</label>
+                                <textarea name="code_instructions" rows="3"
+                                          placeholder="Additional criteria for code evaluation..."
+                                          class="w-full px-4 py-2 border rounded-lg font-mono text-sm">${job?.code_instructions || ''}</textarea>
+                                <p class="text-xs text-gray-500 mt-1">These instructions will be added to the AI prompt for code evaluation</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="flex gap-4 mt-8">
+                        <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg">
+                            ${jobId ? 'Update Job' : 'Create Job'}
+                        </button>
+                        <button type="button" onclick="closeJobModal()" 
+                                class="px-6 bg-gray-200 hover:bg-gray-300 rounded-lg font-semibold">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            `;
+        }
+
+        async function saveJob(event, jobId) {
+            event.preventDefault();
+            const formData = new FormData(event.target);
+            const job = Object.fromEntries(formData);
+            job.created_at = new Date().toISOString();
+            
+            const btn = event.target.querySelector('button[type="submit"]');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            
+            try {
+                const res = await fetch(`${API_BASE}/jobs`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${JWT_TOKEN}`
+                    },
+                    body: JSON.stringify(job)
+                });
+                
+                if (res.ok) {
+                    showNotification('✓ Job saved successfully!');
+                    await loadJobs();
+                    closeJobModal();
+                    switchView('jobs');
+                } else {
+                    const data = await res.json();
+                    showNotification('⚠️ Failed to save: ' + (data.error || 'Unknown error'));
+                    btn.disabled = false;
+                    btn.textContent = jobId ? 'Update Job' : 'Create Job';
+                }
+            } catch (err) {
+                showNotification('⚠️ Network error: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = jobId ? 'Update Job' : 'Create Job';
+            }
+        }
+
+        function editJob(jobId) {
+            openJobModal(jobId);
+        }
+
+        function showNotification(message) {
+            const bar = document.getElementById('notification-bar');
+            const text = document.getElementById('notification-text');
+            text.textContent = message;
+            bar.classList.remove('hidden');
+            setTimeout(() => bar.classList.add('hidden'), 5000);
+        }
+    </script>
+</body>
+</html>

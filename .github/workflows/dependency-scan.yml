@@ -1,0 +1,42 @@
+name: Dependency Scanning
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+  workflow_dispatch:
+
+jobs:
+  scan-dependencies:
+    name: Scan Python Dependencies
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      
+      - name: Install safety
+        run: pip install safety
+      
+      - name: Check for vulnerabilities
+        run: |
+          # Scan requirements files if they exist
+          find . -name "requirements.txt" -exec safety check --file {} \;
+        continue-on-error: true
+      
+      - name: Create Issue if vulnerabilities found
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '� Security vulnerabilities found in dependencies',
+              body: 'Automated dependency scan found vulnerabilities. Please review.',
+              labels: ['security', 'dependencies']
+            })

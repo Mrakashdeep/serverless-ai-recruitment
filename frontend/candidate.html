@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Career Portal - AI Recruitment System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes shimmer {
+            0% { background-position: -1000px 0; }
+            100% { background-position: 1000px 0; }
+        }
+        .shimmer {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 1000px 100%;
+            animation: shimmer 2s infinite;
+        }
+        .progress-bar {
+            transition: width 1s linear;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div id="app"></div>
+
+    <script>
+        const API_BASE = 'https://nin1zoih0d.execute-api.ap-south-1.amazonaws.com/prod';
+        
+
+        let resumeFile = null;
+        
+        function handleResumeUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (file.size > 5 * 1024 * 1024) {
+                alert('File too large. Maximum size is 5MB.');
+                event.target.value = '';
+                return;
+            }
+            
+            resumeFile = file;
+            document.getElementById('resume-filename').textContent = file.name;
+            document.getElementById('resume-preview').classList.remove('hidden');
+        }
+        
+        function clearResume() {
+            resumeFile = null;
+            document.getElementById('resume-file').value = '';
+            document.getElementById('resume-preview').classList.add('hidden');
+        }
+        
+        function toggleResumeMode() {
+            const useText = document.getElementById('use-text').checked;
+            const textArea = document.getElementById('resume-text');
+            const fileUpload = document.getElementById('file-upload-area');
+            
+            if (useText) {
+                textArea.classList.remove('hidden');
+                fileUpload.classList.add('hidden');
+            } else {
+                textArea.classList.add('hidden');
+                fileUpload.classList.remove('hidden');
+            }
+        }
+        
+        async function extractTextFromFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = reject;
+                reader.readAsText(file);
+            });
+        }
+
+        // State management
+        let state = {
+            view: 'jobs', // jobs, apply, status, coding, submitted
+            jobs: [],
+            selectedJob: null,
+            submissionId: null,
+            submission: null,
+            questions: [],
+            currentQuestion: 0,
+            answers: {}
+        };
+
+        // Check for submission_id in URL on load
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const submissionId = params.get('submission_id');
+            if (submissionId) {
+                state.submissionId = submissionId;
+                state.view = 'status';
+                loadSubmissionStatus();
+            } else {
+                loadJobs();
+            }
+        });
+
+        // Fetch jobs
+        async function loadJobs() {
+            try {
+                const res = await fetch(`${API_BASE}/jobs`);
+                const data = await res.json();
+                state.jobs = data.jobs || [];
+                render();
+            } catch (err) {
+                console.error('Failed to load jobs:', err);
+                render();
+            }
+        }
+
+
+        
+        function handleResumeUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            // Validate size (5MB)
+            if (file.size > 5 * 1024 * 1024) {
+                alert('File too large. Maximum size is 5MB.');
+                event.target.value = '';
+                return;
+            }
+            
+            resumeFile = file;
+            document.getElementById('resume-filename').textContent = file.name;
+            document.getElementById('resume-preview').classList.remove('hidden');
+        }
+        
+        function clearResume() {
+            resumeFile = null;
+            document.getElementById('resume-file').value = '';
+            document.getElementById('resume-preview').classList.add('hidden');
+        }
+        
+        function toggleResumeMode() {
+            const useText = document.getElementById('use-text').checked;
+            const textArea = document.getElementById('resume-text');
+            const fileUpload = document.getElementById('resume-file').parentElement.parentElement;
+            
+            if (useText) {
+                textArea.classList.remove('hidden');
+                fileUpload.classList.add('hidden');
+                textArea.required = true;
+            } else {
+                textArea.classList.add('hidden');
+                fileUpload.classList.remove('hidden');
+                textArea.required = false;
+            }
+        }
+        
+        async function extractTextFromFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const text = e.target.result;
+                    // Basic text extraction - for PDF/DOC, you'd need a proper parser
+                    resolve(text);
+                };
+                reader.onerror = reject;
+                reader.readAsText(file);
+            });
+        }
+
+        // Submit application
+        async function submitApplication(formData) {
+            showLoader('Submitting your application...', 5);
+            
+            // Handle resume file if uploaded
+            let resumeContent = formData.resume_content;
+            if (resumeFile && !document.getElementById('use-text').checked) {
+                try {
+                    resumeContent = await extractTextFromFile(resumeFile);
+                } catch (err) {
+                    hideLoader();
+                    alert('Failed to read resume file. Please try pasting text instead.');
+                    return;
+                }
+            }
+            
+            // Replace resume_content in formData
+            const payload = {
+                candidate_name: formData.candidate_name,
+                email: formData.email,
+                job_role: formData.job_role,
+                job_id: formData.job_id,
+                resume_content: resumeContent
+            };
+            
+            try {
+                const res = await fetch(`${API_BASE}/submit`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJzdWIiOiAicmVjcnVpdGVyIiwgInNjb3BlIjogInN1Ym1pdCByZWFkIiwgImlhdCI6IDE3MDAwMDAwMDAsICJleHAiOiA0MDk5OTk5OTk5LCAiaXNzIjogInNlcnZlcmxlc3MtcmVjcnVpdG1lbnQtc3lzdGVtIn0.Y970jsa6tbVGqBorgRbb-QpPQSISMMI-IEAdqe7lVDc'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                
+                hideLoader();
+                
+                if (res.ok) {
+                    state.submissionId = data.submission_id;
+                    state.view = 'status';
+                    window.history.pushState({}, '', `?submission_id=${data.submission_id}`);
+                    loadSubmissionStatus();
+                } else {
+                    alert('Submission failed: ' + (data.error || 'Unknown error'));
+                    render();
+                }
+            } catch (err) {
+                hideLoader();
+                alert('Network error: ' + err.message);
+                render();
+            }
+        }
+
+        // Load submission status and poll if needed
+        async function loadSubmissionStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/results?submission_id=${state.submissionId}`);
+                const data = await res.json();
+                state.submission = data.submission;
+                
+                const status = state.submission.status;
+                
+                if (status === 'RESUME_PENDING') {
+                    showLoader('AI is evaluating your resume...', 45, 'This usually takes 30-45 seconds');
+                    setTimeout(loadSubmissionStatus, 10000); // Poll every 10s
+                } else if (status === 'RESUME_EVALUATED') {
+                    hideLoader();
+                    render();
+                } else if (status === 'CODING_PENDING') {
+                    showLoader('Generating personalized coding questions...', 60, 'Questions are tailored to your background');
+                    setTimeout(loadSubmissionStatus, 10000);
+                } else if (status === 'CODING_READY') {
+                    hideLoader();
+                    loadQuestions();
+                } else if (status === 'CODE_SUBMITTED') {
+                    showLoader('AI is evaluating your code...', 50, 'Analyzing code quality and correctness');
+                    setTimeout(loadSubmissionStatus, 10000);
+                } else if (status === 'CODE_EVALUATED' || status === 'COMPLETED') {
+                    hideLoader();
+                    render();
+                } else {
+                    hideLoader();
+                    render();
+                }
+            } catch (err) {
+                hideLoader();
+                console.error('Failed to load status:', err);
+                render();
+            }
+        }
+
+        // Load coding questions
+        async function loadQuestions() {
+            try {
+                const res = await fetch(`${API_BASE}/questions?submission_id=${state.submissionId}`);
+                const data = await res.json();
+                state.questions = data.questions || [];
+                state.view = 'coding';
+                render();
+            } catch (err) {
+                console.error('Failed to load questions:', err);
+            }
+        }
+
+        // Submit code answers
+        async function submitCode() {
+            stopTimer();
+            showLoader('Submitting your code for evaluation...', 5);
+            
+            const code_answers = state.questions.map(q => ({
+                question_id: q.question_id,
+                answer: state.answers[q.question_id] || ''
+            }));
+            
+            try {
+                const res = await fetch(`${API_BASE}/code-submit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        submission_id: state.submissionId,
+                        code_answers
+                    })
+                });
+                
+                hideLoader();
+                
+                if (res.ok) {
+                    state.view = 'submitted';
+                    render();
+                    setTimeout(loadSubmissionStatus, 5000);
+                } else {
+                    alert('Code submission failed');
+                }
+            } catch (err) {
+                hideLoader();
+                alert('Network error: ' + err.message);
+            }
+        }
+
+        // Loader with progress bar
+        function showLoader(message, estimatedSeconds, subtext = '') {
+            const tips = {
+                resume: [
+                    "� Tip: Our AI evaluates technical skills, experience relevance, and cultural fit",
+                    "� The system checks for keyword matches with job requirements",
+                    "� Projects and quantifiable achievements boost your score",
+                    "✨ Clear formatting and structure matter for readability"
+                ],
+                questions: [
+                    "� AI is analyzing your resume to create personalized questions",
+                    "� Questions are tailored to your experience level and role",
+                    "� Focus on problem-solving approach, not just syntax",
+                    "⏱️ You'll have 30 minutes to complete all questions"
+                ],
+                code: [
+                    "� AI evaluates correctness, code quality, and best practices",
+                    "� Clear variable names and comments improve your score",
+                    "⚡ Efficiency matters, but correctness comes first",
+                    "�️ Error handling and edge cases demonstrate maturity"
+                ]
+            };
+            
+            const tipCategory = message.includes('resume') ? 'resume' : 
+                               message.includes('question') ? 'questions' : 'code';
+            const tipsList = tips[tipCategory];
+            
+            const loaderHTML = `
+                <div id="loader-overlay" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+                    <div class="bg-white rounded-lg p-8 max-w-2xl w-full">
+                        <div class="text-center mb-6">
+                            <div class="inline-block animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mb-4"></div>
+                            <h3 class="text-2xl font-bold text-gray-800">${message}</h3>
+                            ${subtext ? `<p class="text-sm text-gray-600 mt-2">${subtext}</p>` : ''}
+                        </div>
+                        
+                        <!-- Smooth Progress Bar -->
+                        <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden mb-4">
+                            <div id="progress-bar" class="bg-gradient-to-r from-blue-500 to-purple-600 h-4 rounded-full transition-all duration-1000 ease-linear" style="width: 0%"></div>
+                        </div>
+                        <p id="progress-text" class="text-center text-sm font-semibold text-gray-700 mb-6">Estimated time: ${estimatedSeconds}s</p>
+                        
+                        <!-- Interactive Tips -->
+                        <div class="bg-gradient-to-br from-blue-50 to-purple-50 rounded-lg p-6 border border-blue-200">
+                            <h4 class="text-sm font-bold text-gray-800 mb-3 flex items-center">
+                                <span class="text-xl mr-2">�</span>
+                                Did you know?
+                            </h4>
+                            <div id="tip-container" class="space-y-2">
+                                ${tipsList.map(tip => `<p class="text-sm text-gray-700">${tip}</p>`).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            const existing = document.getElementById('loader-overlay');
+            if (existing) existing.remove();
+            
+            document.body.insertAdjacentHTML('beforeend', loaderHTML);
+            
+            // Smooth progress animation
+            let progress = 0;
+            const increment = 95 / estimatedSeconds;
+            const interval = setInterval(() => {
+                progress += increment;
+                if (progress > 95) progress = 95;
+                
+                const bar = document.getElementById('progress-bar');
+                if (bar) bar.style.width = progress + '%';
+                
+                const remaining = Math.max(0, Math.ceil(estimatedSeconds - (progress / increment)));
+                const text = document.getElementById('progress-text');
+                if (text) text.textContent = remaining > 0 ? `Estimated time remaining: ${remaining}s` : 'Almost done...';
+            }, 1000);
+            
+            window.loaderInterval = interval;
+        }
+
+        function hideLoader() {
+            if (window.loaderInterval) {
+                clearInterval(window.loaderInterval);
+                window.loaderInterval = null;
+            }
+            const loader = document.getElementById('loader-overlay');
+            if (loader) {
+                // Complete the progress bar
+                const bar = document.getElementById('progress-bar');
+                if (bar) bar.style.width = '100%';
+                setTimeout(() => loader.remove(), 500);
+            }
+        }
+
+
+        // Timer functions
+        function startTimer() {
+            if (state.timerInterval) return; // Already running
+            
+            state.timerStart = Date.now();
+            state.timerRemaining = state.timerDuration;
+            
+            state.timerInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - state.timerStart) / 1000);
+                state.timerRemaining = state.timerDuration - elapsed;
+                
+                if (state.timerRemaining <= 0) {
+                    state.timerRemaining = 0;
+                    clearInterval(state.timerInterval);
+                    showTimeUpModal();
+                }
+                
+                updateTimerDisplay();
+            }, 1000);
+        }
+        
+        function updateTimerDisplay() {
+            const timerEl = document.getElementById('coding-timer');
+            if (!timerEl) return;
+            
+            const minutes = Math.floor(state.timerRemaining / 60);
+            const seconds = state.timerRemaining % 60;
+            const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            
+            timerEl.textContent = timeStr;
+            
+            // Change color based on time remaining
+            if (state.timerRemaining <= 300) { // Last 5 minutes
+                timerEl.className = 'text-4xl font-bold text-red-600';
+            } else if (state.timerRemaining <= 600) { // Last 10 minutes
+                timerEl.className = 'text-4xl font-bold text-orange-600';
+            } else {
+                timerEl.className = 'text-4xl font-bold text-blue-600';
+            }
+        }
+        
+        function showTimeUpModal() {
+            const modal = `
+                <div class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-lg p-12 max-w-md text-center">
+                        <div class="text-6xl mb-6">⏰</div>
+                        <h2 class="text-3xl font-bold text-red-600 mb-4">Time's Up!</h2>
+                        <p class="text-gray-700 mb-6">Your 30 minutes have expired. Your answers will be submitted automatically.</p>
+                        <button onclick="submitCode()" class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-4 px-6 rounded-lg">
+                            Submit Now
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modal);
+        }
+
+        function stopTimer() {
+            if (state.timerInterval) {
+                clearInterval(state.timerInterval);
+                state.timerInterval = null;
+            }
+        }
+
+        // Render functions
+        function render() {
+            const app = document.getElementById('app');
+            
+            if (state.view === 'jobs') {
+                app.innerHTML = renderJobs();
+            } else if (state.view === 'apply') {
+                app.innerHTML = renderApplicationForm();
+            } else if (state.view === 'status') {
+                app.innerHTML = renderStatus();
+            } else if (state.view === 'coding') {
+                app.innerHTML = renderCodingChallenge();
+            } else if (state.view === 'submitted') {
+                app.innerHTML = renderSubmitted();
+            }
+        }
+
+        function renderJobs() {
+            return `
+                <div class="container mx-auto px-4 py-8 max-w-4xl">
+                    <div class="text-center mb-12">
+                        <h1 class="text-4xl font-bold text-gray-900 mb-4">AI-Powered Career Portal</h1>
+                        <p class="text-lg text-gray-600">Find your perfect role with AI-driven recruitment</p>
+                    </div>
+                    
+                    <div class="space-y-6">
+                        ${state.jobs.length === 0 ? '<div class="shimmer h-32 rounded-lg"></div>'.repeat(3) : ''}
+                        ${state.jobs.map(job => `
+                            <div class="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow">
+                                <h2 class="text-2xl font-bold text-gray-900 mb-2">${job.job_role}</h2>
+                                <p class="text-gray-700 mb-4">${job.description}</p>
+                                <div class="flex flex-wrap gap-2 mb-4">
+                                    <span class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
+                                        ${job.min_experience_years}+ years experience
+                                    </span>
+                                    <span class="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+                                        ${job.question_difficulty} difficulty
+                                    </span>
+                                </div>
+                                <div class="mb-4">
+                                    <p class="text-sm font-semibold text-gray-700 mb-1">Required Skills:</p>
+                                    <p class="text-sm text-gray-600">${job.required_skills}</p>
+                                </div>
+                                <button onclick="applyForJob('${job.job_id}')" 
+                                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors">
+                                    Apply Now →
+                                </button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderApplicationForm() {
+            const job = state.jobs.find(j => j.job_id === state.selectedJob);
+            return `
+                <div class="container mx-auto px-4 py-8 max-w-2xl">
+                    <div class="mb-6">
+                        <button onclick="backToJobs()" class="text-blue-600 hover:text-blue-800 font-medium">
+                            ← Back to Jobs
+                        </button>
+                    </div>
+                    
+                    <div class="bg-white rounded-lg shadow-md p-8">
+                        <h1 class="text-3xl font-bold text-gray-900 mb-2">Apply for ${job.job_role}</h1>
+                        <p class="text-gray-600 mb-8">Fill out the form below to start your application</p>
+                        
+                        <form id="application-form" onsubmit="handleApplicationSubmit(event)" class="space-y-6">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Full Name *</label>
+                                <input type="text" name="candidate_name" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                       placeholder="John Doe">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Email *</label>
+                                <input type="email" name="email" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                       placeholder="john@example.com">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Resume *</label>
+                                <div class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-500 transition-colors">
+                                    <input type="file" id="resume-file" accept=".pdf,.doc,.docx,.txt" 
+                                           class="hidden" onchange="handleResumeUpload(event)">
+                                    <label for="resume-file" class="cursor-pointer">
+                                        <div class="text-4xl mb-2">�</div>
+                                        <p class="text-sm font-semibold text-gray-700 mb-1">Click to upload resume</p>
+                                        <p class="text-xs text-gray-500">PDF, DOC, DOCX, or TXT (max 5MB)</p>
+                                    </label>
+                                    <div id="resume-preview" class="mt-4 hidden">
+                                        <p class="text-sm text-green-600 font-medium" id="resume-filename"></p>
+                                        <button type="button" onclick="clearResume()" 
+                                                class="mt-2 text-xs text-red-600 hover:text-red-800">
+                                            Remove file
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="mt-4">
+                                    <label class="flex items-center text-sm text-gray-600">
+                                        <input type="checkbox" id="use-text" onchange="toggleResumeMode()" class="mr-2">
+                                        Paste resume text instead
+                                    </label>
+                                    <textarea id="resume-text" name="resume_content" rows="8"
+                                              class="hidden w-full mt-2 px-4 py-3 border rounded-lg font-mono text-sm"
+                                              placeholder="Paste your resume text here..."></textarea>
+                                </div>
+                            </div>
+                            
+                            <button type="submit" 
+                                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 px-6 rounded-lg transition-colors">
+                                Submit Application
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderStatus() {
+            const sub = state.submission;
+            if (!sub) return '<div class="text-center p-8">Loading...</div>';
+            
+            const status = sub.status;
+            const steps = [
+                { key: 'RESUME_PENDING', label: 'Resume Submitted', icon: '✓', active: true },
+                { key: 'RESUME_EVALUATED', label: 'Resume Evaluated', icon: status === 'RESUME_EVALUATED' ? '✓' : '⏳', active: ['RESUME_EVALUATED', 'CODING_PENDING', 'CODING_READY', 'CODE_SUBMITTED', 'CODE_EVALUATED', 'COMPLETED'].includes(status) },
+                { key: 'CODING_READY', label: 'Coding Round', icon: status === 'CODING_READY' ? '✓' : '⏳', active: ['CODING_READY', 'CODE_SUBMITTED', 'CODE_EVALUATED', 'COMPLETED'].includes(status) },
+                { key: 'COMPLETED', label: 'Final Review', icon: status === 'COMPLETED' ? '✓' : '⏳', active: status === 'COMPLETED' }
+            ];
+            
+            return `
+                <div class="container mx-auto px-4 py-8 max-w-3xl">
+                    <div class="bg-white rounded-lg shadow-md p-8">
+                        <h1 class="text-3xl font-bold text-gray-900 mb-2">${sub.candidate_name}</h1>
+                        <p class="text-lg text-gray-600 mb-8">Application for ${sub.job_role}</p>
+                        
+                        <!-- Progress Steps -->
+                        <div class="flex justify-between mb-12">
+                            ${steps.map((step, i) => `
+                                <div class="flex-1 ${i < steps.length - 1 ? 'pr-4' : ''}">
+                                    <div class="relative">
+                                        ${i < steps.length - 1 ? `
+                                            <div class="absolute top-5 left-1/2 w-full h-0.5 ${step.active ? 'bg-blue-600' : 'bg-gray-300'}"></div>
+                                        ` : ''}
+                                        <div class="relative flex flex-col items-center">
+                                            <div class="w-10 h-10 rounded-full flex items-center justify-center ${step.active ? 'bg-blue-600 text-white' : 'bg-gray-300 text-gray-600'} font-bold mb-2">
+                                                ${step.icon}
+                                            </div>
+                                            <span class="text-xs text-center ${step.active ? 'text-gray-900 font-semibold' : 'text-gray-500'}">${step.label}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                        
+                        ${status === 'RESUME_EVALUATED' ? `
+                            <div class="bg-green-50 border border-green-200 rounded-lg p-6 mb-6">
+                                <h3 class="text-lg font-bold text-green-900 mb-2">Resume Evaluation Complete!</h3>
+                                <div class="space-y-2">
+                                    <p class="text-green-800"><strong>Score:</strong> ${sub.resume_score}/100</p>
+                                    <p class="text-green-800"><strong>Verdict:</strong> ${sub.resume_verdict}</p>
+                                    <p class="text-green-800"><strong>Summary:</strong> ${sub.resume_summary}</p>
+                                </div>
+                                <div class="mt-4">
+                                    <p class="text-sm text-green-700">Your resume has been reviewed. You'll be notified when the recruiter makes a decision.</p>
+                                </div>
+                            </div>
+                        ` : ''}
+                        
+                        ${status === 'CODING_READY' ? `
+                            <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
+                                <h3 class="text-lg font-bold text-blue-900 mb-4">Congratulations! You've been advanced to the coding round</h3>
+                                <p class="text-blue-800 mb-4">We've generated ${state.questions.length || 3} personalized coding questions based on your resume and the job requirements.</p>
+                                <button onclick="startCoding()" 
+                                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors">
+                                    Start Coding Challenge →
+                                </button>
+                            </div>
+                        ` : ''}
+                        
+                        ${status === 'COMPLETED' ? `
+                            <div class="bg-${sub.final_status === 'SHORTLISTED' ? 'green' : 'gray'}-50 border border-${sub.final_status === 'SHORTLISTED' ? 'green' : 'gray'}-200 rounded-lg p-6">
+                                <h3 class="text-2xl font-bold text-${sub.final_status === 'SHORTLISTED' ? 'green' : 'gray'}-900 mb-4">
+                                    ${sub.final_status === 'SHORTLISTED' ? '� Congratulations!' : 'Application Complete'}
+                                </h3>
+                                <div class="space-y-3">
+                                    <p class="text-lg"><strong>Final Status:</strong> ${sub.final_status}</p>
+                                    <p><strong>Final Score:</strong> ${sub.final_score}/100</p>
+                                    <div class="border-t pt-3 mt-3">
+                                        <p class="text-sm font-semibold mb-1">Resume: ${sub.resume_score}/100 (${sub.resume_verdict})</p>
+                                        <p class="text-sm font-semibold">Code: ${sub.code_score}/100 (${sub.code_verdict})</p>
+                                    </div>
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderCodingChallenge() {
+            const q = state.questions[state.currentQuestion];
+            if (!q) return '<div>Loading questions...</div>';
+            
+            return `
+                <div class="container mx-auto px-4 py-8 max-w-5xl">
+                    <div class="bg-white rounded-lg shadow-md p-8">
+                        <!-- Prominent Timer -->
+                        <div class="bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-200 rounded-lg p-6 mb-6 text-center">
+                            <p class="text-sm font-semibold text-gray-700 mb-2">TIME REMAINING</p>
+                            <div id="coding-timer" class="text-4xl font-bold text-blue-600">30:00</div>
+                            <p class="text-xs text-gray-600 mt-2">Submit before time expires</p>
+                        </div>
+                        
+                        <div class="flex justify-between items-center mb-6">
+                            <h1 class="text-2xl font-bold text-gray-900">Coding Challenge</h1>
+                            <span class="text-sm text-gray-600">Question ${state.currentQuestion + 1} of ${state.questions.length}</span>
+                        </div>
+                        
+                        <div class="mb-6">
+                            <div class="flex items-center gap-2 mb-3">
+                                <h2 class="text-xl font-semibold text-gray-900">${q.title}</h2>
+                                <span class="px-2 py-1 bg-${q.difficulty === 'EASY' ? 'green' : q.difficulty === 'MEDIUM' ? 'yellow' : 'red'}-100 text-${q.difficulty === 'EASY' ? 'green' : q.difficulty === 'MEDIUM' ? 'yellow' : 'red'}-800 rounded text-xs font-semibold">
+                                    ${q.difficulty}
+                                </span>
+                            </div>
+                            <p class="text-gray-700 mb-4 leading-relaxed">${q.description}</p>
+                            
+                            ${q.sample_input ? `
+                                <div class="bg-gray-50 p-4 rounded-lg mb-4">
+                                    <p class="text-sm font-semibold text-gray-700 mb-1">Sample Input:</p>
+                                    <code class="text-sm text-gray-800">${q.sample_input}</code>
+                                </div>
+                            ` : ''}
+                            
+                            ${q.sample_output ? `
+                                <div class="bg-gray-50 p-4 rounded-lg mb-4">
+                                    <p class="text-sm font-semibold text-gray-700 mb-1">Expected Output:</p>
+                                    <code class="text-sm text-gray-800">${q.sample_output}</code>
+                                </div>
+                            ` : ''}
+                            
+                            <div class="flex flex-wrap gap-2">
+                                ${q.expected_skills.map(skill => `
+                                    <span class="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">${skill}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <div class="mb-6">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Your Solution:</label>
+                            <textarea 
+                                id="code-input-${q.question_id}"
+                                rows="15"
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+                                placeholder="Write your solution here..."
+                                onchange="saveAnswer('${q.question_id}', this.value)"
+                            >${state.answers[q.question_id] || ''}</textarea>
+                        </div>
+                        
+                        <div class="flex justify-between gap-4">
+                            <button 
+                                onclick="previousQuestion()"
+                                ${state.currentQuestion === 0 ? 'disabled' : ''}
+                                class="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed font-semibold">
+                                ← Previous
+                            </button>
+                            
+                            ${state.currentQuestion < state.questions.length - 1 ? `
+                                <button onclick="nextQuestion()" 
+                                        class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold">
+                                    Next Question →
+                                </button>
+                            ` : `
+                                <button onclick="confirmSubmit()" 
+                                        class="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold">
+                                    Submit All Answers
+                                </button>
+                            `}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSubmitted() {
+            return `
+                <div class="container mx-auto px-4 py-8 max-w-2xl">
+                    <div class="bg-white rounded-lg shadow-md p-12 text-center">
+                        <div class="text-6xl mb-6">✅</div>
+                        <h1 class="text-3xl font-bold text-gray-900 mb-4">Code Submitted Successfully!</h1>
+                        <p class="text-lg text-gray-600 mb-8">
+                            Your solutions have been submitted for evaluation. Our AI is analyzing your code quality, correctness, and problem-solving approach.
+                        </p>
+                        <p class="text-gray-600 mb-8">
+                            You'll receive results within the next few minutes. This page will automatically update.
+                        </p>
+                        <button onclick="location.reload()" 
+                                class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold">
+                            Refresh Status
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Event handlers
+        function applyForJob(jobId) {
+            state.selectedJob = jobId;
+            state.view = 'apply';
+            render();
+        }
+
+        function backToJobs() {
+            state.view = 'jobs';
+            state.selectedJob = null;
+            render();
+        }
+
+        function handleApplicationSubmit(e) {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const job = state.jobs.find(j => j.job_id === state.selectedJob);
+            
+            submitApplication({
+                candidate_name: formData.get('candidate_name'),
+                email: formData.get('email'),
+                job_role: job.job_role,
+                job_id: job.job_id,
+                resume_content: formData.get('resume_content')
+            });
+        }
+
+        function startCoding() {
+            state.view = 'coding';
+            loadQuestions();
+            startTimer();
+        }
+
+        function saveAnswer(questionId, answer) {
+            state.answers[questionId] = answer;
+        }
+
+        function previousQuestion() {
+            if (state.currentQuestion > 0) {
+                state.currentQuestion--;
+                render();
+            }
+        }
+
+        function nextQuestion() {
+            if (state.currentQuestion < state.questions.length - 1) {
+                state.currentQuestion++;
+                render();
+            }
+        }
+
+        function confirmSubmit() {
+            const unanswered = state.questions.filter(q => !state.answers[q.question_id] || state.answers[q.question_id].trim() === '');
+            if (unanswered.length > 0) {
+                if (!confirm(`You have ${unanswered.length} unanswered question(s). Submit anyway?`)) {
+                    return;
+                }
+            }
+            submitCode();
+        }
+    </script>
+</body>
+</html>

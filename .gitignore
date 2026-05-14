@@ -1,0 +1,5 @@
+PERMANENT_TOKEN.txt
+.idea/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfvars

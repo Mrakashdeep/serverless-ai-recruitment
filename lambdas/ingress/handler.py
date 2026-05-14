@@ -1,0 +1,364 @@
+import json
+import boto3
+import uuid
+import os
+import base64
+from datetime import datetime, timezone
+
+s3 = boto3.client("s3")
+sqs = boto3.client("sqs")
+dynamodb = boto3.resource("dynamodb")
+
+def lambda_handler(event, context):
+    http_method = event.get("httpMethod", "GET")
+    path = event.get("path", "/")
+    print(f"Ingress: {http_method} {path}")
+
+    if http_method == "POST" and "/submit" in path:
+        return handle_submit(event)
+    elif http_method == "GET" and "/results" in path:
+        return handle_results(event)
+    elif http_method == "GET" and "/questions" in path:
+        return handle_get_questions(event)
+    elif http_method == "POST" and "/decision" in path:
+        return handle_decision(event)
+    elif http_method == "POST" and "/code-submit" in path:
+        return handle_code_submit(event)
+    elif http_method == "GET" and "/report" in path:
+        return handle_report(event)
+    elif http_method == "GET" and "/jobs" in path:
+        return handle_get_jobs(event)
+    elif http_method == "POST" and "/jobs" in path:
+        return handle_create_job(event)
+    else:
+        return response(405, {"error": "Method not allowed"})
+
+def handle_submit(event):
+    try:
+        body = event.get("body", "{}")
+        if event.get("isBase64Encoded"):
+            body = base64.b64decode(body).decode("utf-8")
+        payload = json.loads(body)
+
+        required = ["candidate_name", "email", "resume_content"]
+        for field in required:
+            if field not in payload:
+                return response(400, {"error": f"Missing required field: {field}"})
+
+        submission_id = str(uuid.uuid4())
+        bucket = os.environ["S3_BUCKET"]
+        timestamp = datetime.now(tz=timezone.utc).isoformat()
+
+        resume_key = f"resumes/{submission_id}/resume.txt"
+        s3.put_object(Bucket=bucket, Key=resume_key,
+                      Body=payload["resume_content"].encode("utf-8"),
+                      ContentType="text/plain")
+
+        table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+        table.put_item(Item={
+            "submission_id": submission_id,
+            "candidate_name": payload["candidate_name"],
+            "email": payload["email"],
+            "resume_s3_key": resume_key,
+            "job_role": payload.get("job_role", "Software Engineer"),
+            "job_id": payload.get("job_id", "default"),
+            "status": "RESUME_PENDING",
+            "resume_status": "PENDING",
+            "code_status": "NOT_STARTED",
+            "final_status": "PENDING",
+            "submitted_at": timestamp,
+            "updated_at": timestamp
+        })
+
+        sqs.send_message(
+            QueueUrl=os.environ["RESUME_QUEUE_URL"],
+            MessageBody=json.dumps({
+                "submission_id": submission_id,
+                "resume_s3_key": resume_key,
+                "candidate_name": payload["candidate_name"],
+                "job_role": payload.get("job_role", "Software Engineer"),
+                "job_id": payload.get("job_id", "default")
+            })
+        )
+
+        print(f"Submission {submission_id} ingested")
+        return response(200, {
+            "message": "Resume submitted successfully. You will be notified of the next steps.",
+            "submission_id": submission_id
+        })
+
+    except Exception as e:
+        print(f"Submit error: {str(e)}")
+        return response(500, {"error": "Internal server error"})
+
+def handle_decision(event):
+    try:
+        body = event.get("body", "{}")
+        if event.get("isBase64Encoded"):
+            body = base64.b64decode(body).decode("utf-8")
+        payload = json.loads(body)
+
+        submission_id = payload.get("submission_id")
+        decision = payload.get("decision")  # ADVANCE or REJECT
+
+        if not submission_id or decision not in ["ADVANCE", "REJECT"]:
+            return response(400, {"error": "submission_id and decision (ADVANCE/REJECT) required"})
+
+        table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+        timestamp = datetime.now(tz=timezone.utc).isoformat()
+
+        if decision == "REJECT":
+            table.update_item(
+                Key={"submission_id": submission_id},
+                UpdateExpression="SET #st = :s, final_status = :fs, recruiter_decision = :rd, updated_at = :ts",
+                ExpressionAttributeNames={"#st": "status"},
+                ExpressionAttributeValues={
+                    ":s": "REJECTED",
+                    ":fs": "REJECTED",
+                    ":rd": "REJECT",
+                    ":ts": timestamp
+                }
+            )
+            return response(200, {"message": "Candidate rejected", "submission_id": submission_id})
+
+        elif decision == "ADVANCE":
+            # Get submission to pass resume to question generator
+            result = table.get_item(Key={"submission_id": submission_id})
+            item = result.get("Item", {})
+            if not item:
+                return response(404, {"error": "Submission not found"})
+
+            table.update_item(
+                Key={"submission_id": submission_id},
+                UpdateExpression="SET #st = :s, recruiter_decision = :rd, updated_at = :ts",
+                ExpressionAttributeNames={"#st": "status"},
+                ExpressionAttributeValues={
+                    ":s": "CODING_PENDING",
+                    ":rd": "ADVANCE",
+                    ":ts": timestamp
+                }
+            )
+
+            # Trigger question generation
+            sqs.send_message(
+                QueueUrl=os.environ["QUESTION_QUEUE_URL"],
+                MessageBody=json.dumps({
+                    "submission_id": submission_id,
+                    "resume_s3_key": item.get("resume_s3_key", ""),
+                    "candidate_name": item.get("candidate_name", ""),
+                    "job_role": item.get("job_role", "Software Engineer"),
+                    "job_id": item.get("job_id", "default")
+                })
+            )
+
+            return response(200, {
+                "message": "Candidate advanced to coding round. Questions are being generated.",
+                "submission_id": submission_id
+            })
+
+    except Exception as e:
+        print(f"Decision error: {str(e)}")
+        return response(500, {"error": "Internal server error"})
+
+def handle_get_questions(event):
+    try:
+        params = event.get("queryStringParameters") or {}
+        submission_id = params.get("submission_id")
+        if not submission_id:
+            return response(400, {"error": "submission_id required"})
+
+        table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+        result = table.get_item(Key={"submission_id": submission_id})
+        item = result.get("Item", {})
+
+        if not item:
+            return response(404, {"error": "Submission not found"})
+
+        status = item.get("status", "")
+        if status == "RESUME_PENDING" or status == "RESUME_EVALUATED":
+            return response(200, {
+                "status": status,
+                "message": "Your resume is being evaluated. Please check back soon.",
+                "questions": []
+            })
+        elif status == "REJECTED":
+            return response(200, {
+                "status": "REJECTED",
+                "message": "Thank you for applying. We will not be moving forward at this time.",
+                "questions": []
+            })
+        elif status == "CODING_PENDING":
+            return response(200, {
+                "status": "CODING_PENDING",
+                "message": "Coding questions are being generated. Please check back in a moment.",
+                "questions": []
+            })
+        elif status in ["CODING_READY", "CODE_SUBMITTED", "CODE_EVALUATED", "COMPLETED"]:
+            return response(200, {
+                "status": status,
+                "candidate_name": item.get("candidate_name"),
+                "job_role": item.get("job_role"),
+                "questions": item.get("coding_questions", []),
+                "code_submitted": item.get("code_status") != "NOT_STARTED"
+            })
+        else:
+            return response(200, {"status": status, "questions": []})
+
+    except Exception as e:
+        print(f"Questions error: {str(e)}")
+        return response(500, {"error": "Internal server error"})
+
+def handle_code_submit(event):
+    try:
+        body = event.get("body", "{}")
+        if event.get("isBase64Encoded"):
+            body = base64.b64decode(body).decode("utf-8")
+        payload = json.loads(body)
+
+        submission_id = payload.get("submission_id")
+        code_answers = payload.get("code_answers", [])
+
+        if not submission_id or not code_answers:
+            return response(400, {"error": "submission_id and code_answers required"})
+
+        bucket = os.environ["S3_BUCKET"]
+        timestamp = datetime.now(tz=timezone.utc).isoformat()
+
+        code_key = f"code/{submission_id}/answers.json"
+        s3.put_object(
+            Bucket=bucket,
+            Key=code_key,
+            Body=json.dumps(code_answers).encode("utf-8"),
+            ContentType="application/json"
+        )
+
+        table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+        result = table.get_item(Key={"submission_id": submission_id})
+        item = result.get("Item", {})
+
+        table.update_item(
+            Key={"submission_id": submission_id},
+            UpdateExpression="SET #st = :s, code_s3_key = :ck, code_status = :cs, updated_at = :ts",
+            ExpressionAttributeNames={"#st": "status"},
+            ExpressionAttributeValues={
+                ":s": "CODE_SUBMITTED",
+                ":ck": code_key,
+                ":cs": "PENDING",
+                ":ts": timestamp
+            }
+        )
+
+        sqs.send_message(
+            QueueUrl=os.environ["CODE_QUEUE_URL"],
+            MessageBody=json.dumps({
+                "submission_id": submission_id,
+                "code_s3_key": code_key,
+                "candidate_name": item.get("candidate_name", ""),
+                "job_role": item.get("job_role", "Software Engineer"),
+                "job_id": item.get("job_id", "default"),
+                "coding_questions": item.get("coding_questions", [])
+            })
+        )
+
+        return response(200, {"message": "Code submitted successfully. Results will be available shortly."})
+
+    except Exception as e:
+        print(f"Code submit error: {str(e)}")
+        return response(500, {"error": "Internal server error"})
+
+def handle_report(event):
+    try:
+        params = event.get("queryStringParameters") or {}
+        submission_id = params.get("submission_id")
+        if not submission_id:
+            return response(400, {"error": "submission_id required"})
+
+        table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+        result = table.get_item(Key={"submission_id": submission_id})
+        item = result.get("Item", {})
+
+        if not item:
+            return response(404, {"error": "Submission not found"})
+
+        return response(200, {"report": item})
+
+    except Exception as e:
+        print(f"Report error: {str(e)}")
+        return response(500, {"error": "Internal server error"})
+
+def handle_results(event):
+    try:
+        table = dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+        params = event.get("queryStringParameters") or {}
+
+        if "submission_id" in params:
+            result = table.get_item(Key={"submission_id": params["submission_id"]})
+            item = result.get("Item", {})
+            if not item:
+                return response(404, {"error": "Submission not found"})
+            return response(200, {"submission": item})
+        else:
+            result = table.scan(Limit=50)
+            items = result.get("Items", [])
+            items.sort(key=lambda x: x.get("submitted_at", ""), reverse=True)
+            return response(200, {"submissions": items, "count": len(items)})
+
+    except Exception as e:
+        print(f"Results error: {str(e)}")
+        return response(500, {"error": "Internal server error"})
+
+def handle_get_jobs(event):
+    try:
+        table = dynamodb.Table(os.environ.get("JOB_CONFIGS_TABLE", "serverless-recruitment-job-configs"))
+        result = table.scan()
+        jobs = result.get("Items", [])
+        
+        # Filter active jobs only and sort by created date
+        active_jobs = [j for j in jobs if j.get("status", "active") == "active"]
+        active_jobs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        
+        return response(200, {"jobs": active_jobs, "count": len(active_jobs)})
+    except Exception as e:
+        print(f"Get jobs error: {str(e)}")
+        return response(500, {"error": "Internal server error"})
+
+
+def handle_create_job(event):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        table = dynamodb.Table(os.environ.get("JOB_CONFIGS_TABLE", "serverless-recruitment-job-configs"))
+        
+        # Validate required fields
+        required = ["job_id", "job_role", "required_skills", "min_experience_years", "description"]
+        for field in required:
+            if not body.get(field):
+                return response(400, {"error": f"Missing required field: {field}"})
+        
+        # Add defaults
+        body.setdefault("status", "active")
+        body.setdefault("question_difficulty", "MEDIUM")
+        body.setdefault("resume_weightage", "60")
+        body.setdefault("code_weightage", "40")
+        body.setdefault("created_at", datetime.now(tz=timezone.utc).isoformat())
+        body.setdefault("custom_instructions", "")
+        body.setdefault("code_instructions", "")
+        
+        # Save to DynamoDB
+        table.put_item(Item=body)
+        
+        return response(201, {"message": "Job created successfully", "job_id": body["job_id"]})
+    except Exception as e:
+        print(f"Create job error: {str(e)}")
+        return response(500, {"error": "Internal server error"})
+
+def response(status_code, body):
+    return {
+        "statusCode": status_code,
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type,Authorization",
+            "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
+        },
+        "body": json.dumps(body, default=str)
+    }

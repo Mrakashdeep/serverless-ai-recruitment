@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recruiter Dashboard - AI Recruitment System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .stat-card {
+            transition: transform 0.2s;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+        }
+        .modal {
+            display: none;
+        }
+        .modal.active {
+            display: flex;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Token Input Modal -->
+    <div id="auth-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <h2 class="text-2xl font-bold text-gray-900 mb-4">Recruiter Authentication</h2>
+            <p class="text-gray-600 mb-6">Enter your JWT token to access the dashboard</p>
+            <input type="password" id="token-input" 
+                   class="w-full px-4 py-3 border border-gray-300 rounded-lg mb-4 font-mono text-sm"
+                   placeholder="Paste JWT token here...">
+            <button onclick="authenticate()" 
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg">
+                Login
+            </button>
+            <p class="text-xs text-gray-500 mt-4">Generate token using: python3 scripts/generate_token.py</p>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <div id="dashboard" style="display:none;">
+        <!-- Header -->
+        <header class="bg-white border-b border-gray-200 sticky top-0 z-40">
+            <div class="container mx-auto px-4 py-4">
+                <div class="flex justify-between items-center">
+                    <h1 class="text-2xl font-bold text-gray-900">Recruiter Dashboard</h1>
+                    <button onclick="logout()" class="text-sm text-gray-600 hover:text-gray-900">Logout</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Notification Bar -->
+        <div id="notification-bar" class="bg-blue-50 border-b border-blue-200 hidden">
+            <div class="container mx-auto px-4 py-3">
+                <p class="text-blue-800 text-sm" id="notification-text"></p>
+            </div>
+        </div>
+
+        <div class="container mx-auto px-4 py-8">
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                <div class="stat-card bg-white rounded-lg shadow p-6">
+                    <p class="text-sm text-gray-600 mb-1">Total Submissions</p>
+                    <p class="text-3xl font-bold text-gray-900" id="stat-total">0</p>
+                </div>
+                <div class="stat-card bg-white rounded-lg shadow p-6">
+                    <p class="text-sm text-gray-600 mb-1">Pending Review</p>
+                    <p class="text-3xl font-bold text-yellow-600" id="stat-pending">0</p>
+                </div>
+                <div class="stat-card bg-white rounded-lg shadow p-6">
+                    <p class="text-sm text-gray-600 mb-1">Shortlisted</p>
+                    <p class="text-3xl font-bold text-green-600" id="stat-shortlisted">0</p>
+                </div>
+                <div class="stat-card bg-white rounded-lg shadow p-6">
+                    <p class="text-sm text-gray-600 mb-1">Rejected</p>
+                    <p class="text-3xl font-bold text-red-600" id="stat-rejected">0</p>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="bg-white rounded-lg shadow p-6 mb-6">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Status</label>
+                        <select id="filter-status" onchange="applyFilters()" 
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg">
+                            <option value="">All Statuses</option>
+                            <option value="RESUME_EVALUATED">Resume Evaluated</option>
+                            <option value="CODING_READY">Coding Ready</option>
+                            <option value="CODE_EVALUATED">Code Evaluated</option>
+                            <option value="COMPLETED">Completed</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Job Role</label>
+                        <select id="filter-job" onchange="applyFilters()" 
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg">
+                            <option value="">All Roles</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">Search</label>
+                        <input type="text" id="filter-search" onkeyup="applyFilters()" 
+                               placeholder="Search by name or email..."
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Submissions Table -->
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Candidate</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Job Role</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Resume Score</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Submitted</th>
+                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="submissions-table" class="divide-y divide-gray-200">
+                            <tr>
+                                <td colspan="6" class="px-6 py-8 text-center text-gray-500">
+                                    Loading submissions...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Candidate Detail Modal -->
+    <div id="detail-modal" class="modal fixed inset-0 bg-black bg-opacity-50 items-center justify-center z-50 overflow-y-auto">
+        <div class="bg-white rounded-lg max-w-4xl w-full mx-4 my-8 max-h-screen overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-gray-200 px-8 py-4 flex justify-between items-center">
+                <h2 class="text-2xl font-bold text-gray-900" id="modal-title">Candidate Details</h2>
+                <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+            </div>
+            <div id="modal-content" class="p-8"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://nin1zoih0d.execute-api.ap-south-1.amazonaws.com/prod';
+        let JWT_TOKEN = null;
+        let allSubmissions = [];
+        let filteredSubmissions = [];
+        let autoRefreshInterval = null;
+
+        // Check for stored token
+        window.addEventListener('DOMContentLoaded', () => {
+            const stored = localStorage.getItem('recruiter_token');
+            if (stored) {
+                JWT_TOKEN = stored;
+                document.getElementById('auth-modal').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+                loadDashboard();
+            }
+        });
+
+        function authenticate() {
+            const token = document.getElementById('token-input').value.trim();
+            if (!token) {
+                alert('Please enter a token');
+                return;
+            }
+            JWT_TOKEN = token;
+            localStorage.setItem('recruiter_token', token);
+            document.getElementById('auth-modal').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+            loadDashboard();
+        }
+
+        function logout() {
+            JWT_TOKEN = null;
+            localStorage.removeItem('recruiter_token');
+            location.reload();
+        }
+
+        async function loadDashboard() {
+            await loadSubmissions();
+            populateJobFilter();
+            startAutoRefresh();
+        }
+
+        async function loadSubmissions() {
+            try {
+                const res = await fetch(`${API_BASE}/results`);
+                const data = await res.json();
+                allSubmissions = data.submissions || [];
+                filteredSubmissions = [...allSubmissions];
+                
+                updateStats();
+                renderSubmissionsTable();
+                checkForNewEvaluations();
+            } catch (err) {
+                console.error('Failed to load submissions:', err);
+            }
+        }
+
+        function updateStats() {
+            const total = allSubmissions.length;
+            const pending = allSubmissions.filter(s => s.status === 'RESUME_EVALUATED').length;
+            const shortlisted = allSubmissions.filter(s => s.final_status === 'SHORTLISTED').length;
+            const rejected = allSubmissions.filter(s => s.final_status === 'REJECTED').length;
+            
+            document.getElementById('stat-total').textContent = total;
+            document.getElementById('stat-pending').textContent = pending;
+            document.getElementById('stat-shortlisted').textContent = shortlisted;
+            document.getElementById('stat-rejected').textContent = rejected;
+        }
+
+        function populateJobFilter() {
+            const roles = [...new Set(allSubmissions.map(s => s.job_role))];
+            const select = document.getElementById('filter-job');
+            roles.forEach(role => {
+                const option = document.createElement('option');
+                option.value = role;
+                option.textContent = role;
+                select.appendChild(option);
+            });
+        }
+
+        function applyFilters() {
+            const status = document.getElementById('filter-status').value;
+            const job = document.getElementById('filter-job').value;
+            const search = document.getElementById('filter-search').value.toLowerCase();
+            
+            filteredSubmissions = allSubmissions.filter(s => {
+                if (status && s.status !== status) return false;
+                if (job && s.job_role !== job) return false;
+                if (search && !s.candidate_name.toLowerCase().includes(search) && !s.email.toLowerCase().includes(search)) return false;
+                return true;
+            });
+            
+            renderSubmissionsTable();
+        }
+
+        function renderSubmissionsTable() {
+            const tbody = document.getElementById('submissions-table');
+            
+            if (filteredSubmissions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-8 text-center text-gray-500">No submissions found</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = filteredSubmissions.map(sub => `
+                <tr class="hover:bg-gray-50 cursor-pointer" onclick="viewDetails('${sub.submission_id}')">
+                    <td class="px-6 py-4">
+                        <div class="font-semibold text-gray-900">${sub.candidate_name}</div>
+                        <div class="text-sm text-gray-500">${sub.email}</div>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-700">${sub.job_role}</td>
+                    <td class="px-6 py-4">
+                        ${sub.resume_score ? `
+                            <div class="flex items-center gap-2">
+                                <span class="font-semibold text-gray-900">${sub.resume_score}</span>
+                                <span class="px-2 py-1 rounded text-xs ${sub.resume_verdict === 'SHORTLIST' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                                    ${sub.resume_verdict}
+                                </span>
+                            </div>
+                        ` : '<span class="text-gray-400">Pending</span>'}
+                    </td>
+                    <td class="px-6 py-4">
+                        <span class="px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(sub.status)}">
+                            ${formatStatus(sub.status)}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-500">
+                        ${new Date(sub.submitted_at).toLocaleDateString()}
+                    </td>
+                    <td class="px-6 py-4">
+                        <button onclick="event.stopPropagation(); viewDetails('${sub.submission_id}')" 
+                                class="text-blue-600 hover:text-blue-800 font-medium text-sm">
+                            View →
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function getStatusColor(status) {
+            if (!status) return 'bg-gray-100 text-gray-800';
+            const colors = {
+                'RESUME_PENDING': 'bg-yellow-100 text-yellow-800',
+                'RESUME_EVALUATED': 'bg-blue-100 text-blue-800',
+                'CODING_PENDING': 'bg-purple-100 text-purple-800',
+                'CODING_READY': 'bg-green-100 text-green-800',
+                'CODE_SUBMITTED': 'bg-orange-100 text-orange-800',
+                'CODE_EVALUATED': 'bg-indigo-100 text-indigo-800',
+                'COMPLETED': 'bg-gray-100 text-gray-800'
+            };
+            return colors[status] || 'bg-gray-100 text-gray-800';
+        }
+
+        function formatStatus(status) {
+            if (!status) return 'Unknown';
+            return status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        }
+
+        async function viewDetails(submissionId) {
+            try {
+                const res = await fetch(`${API_BASE}/results?submission_id=${submissionId}`);
+                const data = await res.json();
+                const sub = data.submission;
+                
+                document.getElementById('modal-title').textContent = sub.candidate_name;
+                document.getElementById('modal-content').innerHTML = renderDetailView(sub);
+                document.getElementById('detail-modal').classList.add('active');
+            } catch (err) {
+                alert('Failed to load details: ' + err.message);
+            }
+        }
+
+        function renderDetailView(sub) {
+            return `
+                <div class="space-y-6">
+                    <!-- Basic Info -->
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-900 mb-2">Application Details</h3>
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div><span class="font-semibold">Email:</span> ${sub.email}</div>
+                            <div><span class="font-semibold">Role:</span> ${sub.job_role}</div>
+                            <div><span class="font-semibold">Status:</span> ${formatStatus(sub.status)}</div>
+                            <div><span class="font-semibold">Submitted:</span> ${new Date(sub.submitted_at).toLocaleString()}</div>
+                        </div>
+                    </div>
+
+                    <!-- Resume Evaluation -->
+                    ${sub.resume_status === 'COMPLETE' ? `
+                        <div class="border-t pt-6">
+                            <h3 class="text-lg font-bold text-gray-900 mb-4">Resume Evaluation</h3>
+                            <div class="bg-${sub.resume_verdict === 'SHORTLIST' ? 'green' : 'red'}-50 border border-${sub.resume_verdict === 'SHORTLIST' ? 'green' : 'red'}-200 rounded-lg p-4 mb-4">
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="text-lg font-bold">Score: ${sub.resume_score}/100</span>
+                                    <span class="px-3 py-1 bg-${sub.resume_verdict === 'SHORTLIST' ? 'green' : 'red'}-200 text-${sub.resume_verdict === 'SHORTLIST' ? 'green' : 'red'}-900 rounded font-semibold">
+                                        ${sub.resume_verdict}
+                                    </span>
+                                </div>
+                                <p class="text-sm mb-2"><strong>Confidence:</strong> ${sub.resume_confidence}</p>
+                            </div>
+                            <div class="mb-4">
+                                <h4 class="font-semibold text-gray-900 mb-2">Summary</h4>
+                                <p class="text-gray-700 text-sm">${sub.resume_summary}</p>
+                            </div>
+                            ${sub.resume_strengths && sub.resume_strengths.length > 0 ? `
+                                <div class="mb-4">
+                                    <h4 class="font-semibold text-gray-900 mb-2">Strengths</h4>
+                                    <ul class="list-disc list-inside text-sm text-gray-700 space-y-1">
+                                        ${sub.resume_strengths.map(s => `<li>${s}</li>`).join('')}
+                                    </ul>
+                                </div>
+                            ` : ''}
+                            ${sub.resume_gaps && sub.resume_gaps.length > 0 ? `
+                                <div class="mb-4">
+                                    <h4 class="font-semibold text-gray-900 mb-2">Gaps</h4>
+                                    <ul class="list-disc list-inside text-sm text-gray-700 space-y-1">
+                                        ${sub.resume_gaps.map(g => `<li>${g}</li>`).join('')}
+                                    </ul>
+                                </div>
+                            ` : ''}
+                            
+                            ${sub.status === 'RESUME_EVALUATED' && !sub.recruiter_decision ? `
+                                <div class="flex gap-4 mt-6">
+                                    <button onclick="makeDecision('${sub.submission_id}', 'ADVANCE')" 
+                                            class="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg">
+                                        ✓ Advance to Coding
+                                    </button>
+                                    <button onclick="makeDecision('${sub.submission_id}', 'REJECT')" 
+                                            class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg">
+                                        ✗ Reject
+                                    </button>
+                                </div>
+                            ` : ''}
+                            
+                            ${sub.recruiter_decision ? `
+                                <div class="mt-4 p-3 bg-blue-50 border border-blue-200 rounded">
+                                    <p class="text-sm text-blue-800"><strong>Decision:</strong> ${sub.recruiter_decision}</p>
+                                </div>
+                            ` : ''}
+                        </div>
+                    ` : ''}
+
+                    <!-- Code Evaluation -->
+                    ${sub.code_status === 'COMPLETE' ? `
+                        <div class="border-t pt-6">
+                            <h3 class="text-lg font-bold text-gray-900 mb-4">Code Evaluation</h3>
+                            <div class="bg-${sub.code_verdict === 'PASS' ? 'green' : 'red'}-50 border border-${sub.code_verdict === 'PASS' ? 'green' : 'red'}-200 rounded-lg p-4 mb-4">
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="text-lg font-bold">Score: ${sub.code_score}/100</span>
+                                    <span class="px-3 py-1 bg-${sub.code_verdict === 'PASS' ? 'green' : 'red'}-200 text-${sub.code_verdict === 'PASS' ? 'green' : 'red'}-900 rounded font-semibold">
+                                        ${sub.code_verdict}
+                                    </span>
+                                </div>
+                                <p class="text-sm mb-2"><strong>Confidence:</strong> ${sub.code_confidence}</p>
+                                <p class="text-sm"><strong>Complexity:</strong> ${sub.code_complexity}</p>
+                            </div>
+                            <div class="mb-4">
+                                <h4 class="font-semibold text-gray-900 mb-2">Summary</h4>
+                                <p class="text-gray-700 text-sm">${sub.code_summary}</p>
+                            </div>
+                            ${sub.code_strengths && sub.code_strengths.length > 0 ? `
+                                <div class="mb-4">
+                                    <h4 class="font-semibold text-gray-900 mb-2">Strengths</h4>
+                                    <ul class="list-disc list-inside text-sm text-gray-700 space-y-1">
+                                        ${sub.code_strengths.map(s => `<li>${s}</li>`).join('')}
+                                    </ul>
+                                </div>
+                            ` : ''}
+                            ${sub.code_issues && sub.code_issues.length > 0 ? `
+                                <div class="mb-4">
+                                    <h4 class="font-semibold text-gray-900 mb-2">Issues</h4>
+                                    <ul class="list-disc list-inside text-sm text-gray-700 space-y-1">
+                                        ${sub.code_issues.map(i => `<li>${i}</li>`).join('')}
+                                    </ul>
+                                </div>
+                            ` : ''}
+                        </div>
+                    ` : ''}
+
+                    <!-- Final Decision -->
+                    ${sub.status === 'COMPLETED' && sub.final_status ? `
+                        <div class="border-t pt-6">
+                            <h3 class="text-lg font-bold text-gray-900 mb-4">Final Decision</h3>
+                            <div class="bg-${sub.final_status === 'SHORTLISTED' ? 'green' : 'gray'}-50 border border-${sub.final_status === 'SHORTLISTED' ? 'green' : 'gray'}-200 rounded-lg p-6 text-center">
+                                <div class="text-4xl mb-3">${sub.final_status === 'SHORTLISTED' ? '�' : '�'}</div>
+                                <p class="text-2xl font-bold text-${sub.final_status === 'SHORTLISTED' ? 'green' : 'gray'}-900 mb-2">
+                                    ${sub.final_status}
+                                </p>
+                                <p class="text-lg mb-4"><strong>Final Score:</strong> ${sub.final_score}/100</p>
+                                <div class="text-sm text-gray-700">
+                                    <p>Resume: ${sub.resume_score}/100 (${sub.resume_verdict})</p>
+                                    <p>Code: ${sub.code_score}/100 (${sub.code_verdict})</p>
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        async function makeDecision(submissionId, decision) {
+            // Show loading overlay
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+            
+            try {
+                const res = await fetch(`${API_BASE}/decision`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${JWT_TOKEN}`
+                    },
+                    body: JSON.stringify({ submission_id: submissionId, decision })
+                });
+                
+                if (res.ok) {
+                    closeModal();
+                    showNotification(`✓ Candidate ${decision === 'ADVANCE' ? 'advanced to coding round' : 'rejected'} successfully`);
+                    loadSubmissions();
+                } else {
+                    const data = await res.json();
+                    showNotification('⚠️ Decision failed: ' + (data.error || 'Unknown error'));
+                    btn.disabled = false;
+                    btn.textContent = decision === 'ADVANCE' ? '✓ Advance to Coding' : '✗ Reject';
+                }
+            } catch (err) {
+                console.error('Decision error:', err);
+                showNotification('⚠️ Network error. Please check your connection and try again.');
+                btn.disabled = false;
+                btn.textContent = decision === 'ADVANCE' ? '✓ Advance to Coding' : '✗ Reject';
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('detail-modal').classList.remove('active');
+        }
+
+        function showNotification(message) {
+            const bar = document.getElementById('notification-bar');
+            const text = document.getElementById('notification-text');
+            text.textContent = message;
+            bar.classList.remove('hidden');
+            setTimeout(() => bar.classList.add('hidden'), 5000);
+        }
+
+        function checkForNewEvaluations() {
+            const newEvals = allSubmissions.filter(s => 
+                s.status === 'RESUME_EVALUATED' && !s.recruiter_decision
+            ).length;
+            
+            if (newEvals > 0) {
+                showNotification(`${newEvals} new resume evaluation${newEvals > 1 ? 's' : ''} ready for review`);
+            }
+        }
+
+        function startAutoRefresh() {
+            autoRefreshInterval = setInterval(() => {
+                loadSubmissions();
+            }, 30000); // Refresh every 30 seconds
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+        });
+    </script>
+</body>
+</html>
